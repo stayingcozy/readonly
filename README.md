@@ -2,7 +2,7 @@
 
 Guarantee read-only, scope what's visible, hide secrets, don't let it wander or clobber.
 
-~~UNDER CONSTRUCTION~~
+*UNDER CONSTRUCTION*
 
 ## install
 
