@@ -1,4 +1,3 @@
-use crate::cli::Cli;
 use anyhow::Result;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::fs;
@@ -15,15 +14,15 @@ fn default_masks() -> Vec<String> {
 }
 
 /// Resolve the full mask list from CLI flags.
-pub fn resolve_masks(cli: &Cli) -> Vec<String> {
-    if cli.no_mask {
+pub fn resolve_masks(no_mask: bool, extra: &[String]) -> Vec<String> {
+    if no_mask {
         return vec![];
     }
     let mut m = default_masks();
-    for extra in &cli.mask {
-        let clean = extra.trim_start_matches("./");
-        m.push(format!("**/{clean}")); // match at any depth
-        m.push(clean.to_string());     // and as given
+    for e in extra {
+        let clean = e.trim_start_matches("./");
+        m.push(format!("**/{clean}"));
+        m.push(clean.to_string());
     }
     m
 }

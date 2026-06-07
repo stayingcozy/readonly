@@ -11,19 +11,20 @@ pub struct RunConfig {
     pub memory_mb: u32,
 }
 
-pub fn build_run_command(p: &Platform, cfg: &RunConfig) -> Result<Command> {
+pub fn build_run_command(p: &Platform, cfg: &RunConfig, fw_args: &[String]) -> Result<Command> {
     let qemu = which(p.qemu).with_context(|| format!("{} not found in PATH", p.qemu))?;
     let mut c = Command::new(qemu);
 
     c.args(["-machine", &format!("{},accel={}", p.machine, p.accel)]);
     c.args(["-m", &cfg.memory_mb.to_string()]);
     c.arg("-nographic");
+    c.args(fw_args);
 
     // Base image, made effectively read-only by -snapshot: all guest writes go
     // to a throwaway overlay, the base file is never touched. This IS the
     // read-only-base + ephemeral-overlay model, in one flag.
     c.args(["-drive", &format!(
-        "file={},if=virtio,format=raw", cfg.base_image.display())]);
+        "file={},if=virtio,format=qcow2", cfg.base_image.display())]);
     c.arg("-snapshot");
 
     // Project: the filtered tree (masked paths already gone), shared read-only.

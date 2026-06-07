@@ -1,19 +1,31 @@
 use crate::platform::{Arch, Platform};
 use anyhow::{bail, Context, Result};
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use which::which;
 
-// VERIFY: exact Alpine "cloud" qcow2 URLs change every release — fill from
-// https://alpinelinux.org/cloud/ (nocloud variant) and pin a sha256 for each.
-fn image_url(arch: Arch) -> &'static str {
+struct ImageSource {
+    url: &'static str,
+    sha256: &'static str, // empty = not pinned yet, verification skipped
+}
+
+// VERIFY: fill from https://alipinelinux.org/cloud/ (nocloud qcow2 + its sha256
+fn image_source(arch: Arch) -> ImageSource {
     match arch {
-        Arch::X86_64 => "https://example/alpine-nocloud-x86_64.qcow2",   // TODO
-        Arch::Aarch64 => "https://example/alpine-nocloud-aarch64.qcow2", // TODO
+        Arch::X86_64 => ImageSource {
+            url: "https://example/alpine-nocloud-x86_64.qcow2",
+            sha256: "",
+        },
+        Arch::Aarch64 => ImageSource {
+            url: "https://example/alpine-nocloud-aarch64.qcow2",
+            sha256: "",
+        },
     }
 }
+
 
 pub fn run(p: &Platform, data: &Path, force: bool) -> Result<()> {
     ensure_tools(p)?;
@@ -44,10 +56,38 @@ pub fn run(p: &Platform, data: &Path, force: bool) -> Result<()> {
     Ok(())
 }
 
-fn ensure_tools(p: &Platform) -> Result<()> {
-    which(p.qemu).with_context(|| format!("{} not found in PATH", p.qemu))?;
-    which("qemu-img").context("qemu-img not found in PATH (install QEMU)")?;
+pub(crate) fn ensure_tools(p: &Platform) -> Result<()> {
+    require_tool(p.qemu)?;
+    require_tool("qemu-img")?;
     Ok(())
+}
+
+fn require_tool(name: &str) -> Result<PathBuf> {
+    let path = match which(name) {
+        Ok(p) => p,
+        Err(_) => bail!("{name} not found in PATH.\n\nInstall QEMU:\n{}", install_hint()),
+    };
+    // Confirm it actually runs (catches wrong-arch / broken installs).
+    let out = Command::new(&path)
+        .arg("--version")
+        .output()
+        .with_context(|| format!("failed to execute {}", path.display()))?;
+    if !out.status.success() {
+        bail!("{} is present but did not run successfully", path.display());
+    }
+    Ok(path)
+}
+
+fn install_hint() -> String {
+    match std::env::consts::OS {
+        "macos" => "  brew install qemu".to_string(),
+        "windows" => "  scoop install qemu  (or https://www.qemu.org/download/#windows)\n  \
+                       then ensure the QEMU folder is on your PATH".to_string(),
+        "linux" => "  Debian/Ubuntu:  sudo apt install qemu-system qemu-utils\n  \
+                     Fedora:         sudo dnf install qemu-system-x86 qemu-img\n  \
+                     Arch:           sudo pacman -S qemu-full".to_string(),
+        other => format!("  install QEMU for {other} via your package manager"),
+    }
 }
 
 fn fetch_image(p: &Platform, cache: &Path) -> Result<PathBuf> {
@@ -55,16 +95,58 @@ fn fetch_image(p: &Platform, cache: &Path) -> Result<PathBuf> {
     if dest.exists() {
         return Ok(dest);
     }
-    let url = image_url(p.arch);
-    println!("Downloading base image: {url}");
-    let resp = ureq::get(url).call().context("downloading base image")?;
+    let src = image_source(p.arch);
+    println!("Downloading base image: {}", src.url);
+
+    let resp = ureq::get(src.url).call().context("downloading base image")?;
     let mut reader = resp.into_reader();
+
     let tmp = dest.with_extension("part");
     let mut file = fs::File::create(&tmp)?;
-    std::io::copy(&mut reader, &mut file)?;
-    // TODO: verify sha256 against the pinned checksum before promoting.
+    let mut hasher = Sha256::new();
+    
+    let mut buf = [0u8; 64 * 1024];
+    let mut total: u64 = 0;
+    let mut mark = 16 * 1024 * 1024;
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        file.write_all(&buf[..n])?;
+        hasher.update(&buf[..n]);
+        total += n as u64;
+        if total >= mark {
+            eprint!("\r downloaded {} MiB", total / (1024 * 1024));
+            mark += 16 * 1024 * 1024;
+        }
+    }
+    file.flush()?;
+    eprintln!("\r downloaded {} MiB", total / (1024 * 1024));
+    
+    let got = hex(&hasher.finalize());
+    if src.sha256.is_empty() {
+        eprintln!(" warning: no pinned sha256 - skipping verification");
+        eprintln!(" (computed {got}; past it into image_source to enable the check)");
+    } else if !got.eq_ignore_ascii_case(src.sha256) {
+        let _ = fs::remove_file(&tmp);
+        bail!(
+            "checksum mismatch for base image\n expected {}\n got   {}",
+            src.sha256, got
+        );
+    }
+
     fs::rename(&tmp, &dest)?;
     Ok(dest)
+}
+
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
 }
 
 fn write_seed(p: &Platform, seed: &Path) -> Result<()> {
@@ -91,7 +173,7 @@ fn write_seed(p: &Platform, seed: &Path) -> Result<()> {
 // The unified runner: no fw_cfg cmd -> normal login (setup/install);
 // cmd present -> mount project ro, run agent, power off (run).
 fn user_data(p: &Platform) -> String {
-    let console = p.console; // ttyS0 (x86) / ttyAMA0 (aarch64)
+    let console = p.console;
     format!(
         "#cloud-config
 packages:
@@ -102,24 +184,31 @@ write_files:
     permissions: '0755'
     content: |
       #!/bin/sh
-      CMD=\"$(cat /sys/firmware/qemu_fw_cfg/by_name/opt/readonly/cmd/raw 2>/dev/null)\"
-      if [ -z \"$CMD\" ]; then
-        exec /sbin/getty -L {console} 115200 vt100   # setup/install: a shell
+      FW=/sys/firmware/qemu_fw_cfg/by_name/opt/readonly
+      INSTALL=\"$(cat \"$FW/install/raw\" 2>/dev/null)\"
+      CMD=\"$(cat \"$FW/cmd/raw\" 2>/dev/null)\"
+      if [ -n \"$INSTALL\" ]; then
+        echo '>> Installing agent into the base image...'
+        sh -c \"$INSTALL\"
+        echo '>> Done. Log in to your agent now, then type: poweroff'
+        exec /bin/sh
+      elif [ -n \"$CMD\" ]; then
+        mkdir -p /mnt/project
+        mount -t 9p -o trans=virtio,version=9p2000.L,ro project /mnt/project
+        cd /mnt/project
+        $CMD
+        poweroff -f
+      else
+        exec /bin/sh
       fi
-      mkdir -p /mnt/project
-      mount -t 9p -o trans=virtio,version=9p2000.L,ro project /mnt/project
-      cd /mnt/project
-      $CMD
-      poweroff -f                                    # run: done, tear down
 runcmd:
   - modprobe 9pnet_virtio qemu_fw_cfg 2>/dev/null || true
-  # VERIFY: inittab format on the Alpine cloud image; this swaps the console
-  # getty for our runner so all three modes share one entry.
   - sed -i 's|^{console}::.*|{console}::respawn:/usr/local/sbin/readonly-runner|' /etc/inittab
   - poweroff
 "
     )
 }
+
 
 fn provision(p: &Platform, base: &Path, seed: &Path) -> Result<()> {
     let qemu = which(p.qemu)?;
