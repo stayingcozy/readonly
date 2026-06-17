@@ -2,26 +2,30 @@ use crate::platform::{Arch, Platform};
 use anyhow::{bail, Context, Result};
 use std::fs;
 use std::io::{Read, Write};
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha512};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use which::which;
 
 struct ImageSource {
     url: &'static str,
-    sha256: &'static str, // empty = not pinned yet, verification skipped
+    sha512: &'static str, // empty = not pinned yet, verification skipped
 }
 
-// VERIFY: fill from https://alipinelinux.org/cloud/ (nocloud qcow2 + its sha256
+// Debian "nocloud" cloud images: ship cloud-init, default to the NoCloud
+// datasource our CIDATA seed feeds, and are glibc-native so the official
+// curl|bash installers Just Work. To pin sha512, swap `latest` for a dated
+// build dir (e.g. .../bookworm/20240xxx-yy/) and paste the matching value
+// from its SHA512SUMS — `latest` moves, so a pinned hash there would rot.
 fn image_source(arch: Arch) -> ImageSource {
     match arch {
         Arch::X86_64 => ImageSource {
-            url: "https://example/alpine-nocloud-x86_64.qcow2",
-            sha256: "",
+            url: "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-nocloud-amd64.qcow2",
+            sha512: "",
         },
         Arch::Aarch64 => ImageSource {
-            url: "https://example/alpine-nocloud-aarch64.qcow2",
-            sha256: "",
+            url: "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-nocloud-arm64.qcow2",
+            sha512: "",
         },
     }
 }
@@ -48,7 +52,7 @@ pub fn run(p: &Platform, data: &Path, force: bool) -> Result<()> {
     write_seed(p, &seed)?;
 
     // 3. Boot once read-WRITE to provision; cloud-init ends with poweroff.
-    println!("Provisioning base VM (installing Node + runner)...");
+    println!("Provisioning base VM (installing tools + baking runner)...");
     provision(p, &base, &seed)?;
     let _ = fs::remove_file(&seed); // seed only needed for first boot
 
@@ -91,7 +95,7 @@ fn install_hint() -> String {
 }
 
 fn fetch_image(p: &Platform, cache: &Path) -> Result<PathBuf> {
-    let dest = cache.join(format!("alpine-{:?}.qcow2", p.arch).to_lowercase());
+    let dest = cache.join(format!("debian-{:?}.qcow2", p.arch).to_lowercase());
     if dest.exists() {
         return Ok(dest);
     }
@@ -103,7 +107,7 @@ fn fetch_image(p: &Platform, cache: &Path) -> Result<PathBuf> {
 
     let tmp = dest.with_extension("part");
     let mut file = fs::File::create(&tmp)?;
-    let mut hasher = Sha256::new();
+    let mut hasher = Sha512::new();
     
     let mut buf = [0u8; 64 * 1024];
     let mut total: u64 = 0;
@@ -125,14 +129,14 @@ fn fetch_image(p: &Platform, cache: &Path) -> Result<PathBuf> {
     eprintln!("\r downloaded {} MiB", total / (1024 * 1024));
     
     let got = hex(&hasher.finalize());
-    if src.sha256.is_empty() {
-        eprintln!(" warning: no pinned sha256 - skipping verification");
-        eprintln!(" (computed {got}; past it into image_source to enable the check)");
-    } else if !got.eq_ignore_ascii_case(src.sha256) {
+    if src.sha512.is_empty() {
+        eprintln!(" warning: no pinned sha512 - skipping verification");
+        eprintln!(" (computed {got}; paste it into image_source to enable the check)");
+    } else if !got.eq_ignore_ascii_case(src.sha512) {
         let _ = fs::remove_file(&tmp);
         bail!(
             "checksum mismatch for base image\n expected {}\n got   {}",
-            src.sha256, got
+            src.sha512, got
         );
     }
 
@@ -170,15 +174,19 @@ fn write_seed(p: &Platform, seed: &Path) -> Result<()> {
     Ok(())
 }
 
-// The unified runner: no fw_cfg cmd -> normal login (setup/install);
-// cmd present -> mount project ro, run agent, power off (run).
+// The unified runner baked into the image, plus the systemd wiring that runs
+// it on the serial console at every boot. No fw_cfg -> interactive shell;
+// install set -> run it then drop to a shell for login; cmd set -> mount the
+// project ro, run the agent, power off (the `run` path).
 fn user_data(p: &Platform) -> String {
     let console = p.console;
     format!(
         "#cloud-config
+package_update: true
 packages:
-  - nodejs
-  - npm
+  - curl
+  - ca-certificates
+  - git
 write_files:
   - path: /usr/local/sbin/readonly-runner
     permissions: '0755'
@@ -193,6 +201,7 @@ write_files:
         echo '>> Done. Log in to your agent now, then type: poweroff'
         exec /bin/sh
       elif [ -n \"$CMD\" ]; then
+        modprobe 9pnet_virtio 2>/dev/null || true
         mkdir -p /mnt/project
         mount -t 9p -o trans=virtio,version=9p2000.L,ro project /mnt/project
         cd /mnt/project
@@ -201,9 +210,22 @@ write_files:
       else
         exec /bin/sh
       fi
+  - path: /etc/systemd/system/serial-getty@{console}.service.d/readonly.conf
+    permissions: '0644'
+    content: |
+      [Service]
+      ExecStart=
+      ExecStart=-/usr/local/sbin/readonly-runner
+      Restart=always
+  - path: /etc/modules-load.d/readonly.conf
+    permissions: '0644'
+    content: |
+      qemu_fw_cfg
+      9pnet_virtio
+      9p
 runcmd:
-  - modprobe 9pnet_virtio qemu_fw_cfg 2>/dev/null || true
-  - sed -i 's|^{console}::.*|{console}::respawn:/usr/local/sbin/readonly-runner|' /etc/inittab
+  - systemctl daemon-reload
+  - systemctl enable serial-getty@{console}.service
   - poweroff
 "
     )
@@ -212,16 +234,16 @@ runcmd:
 
 fn provision(p: &Platform, base: &Path, seed: &Path) -> Result<()> {
     let qemu = which(p.qemu)?;
+    let fw = crate::firmware::resolve(p)?; // aarch64 'virt' needs edk2; kept alive below
     let mut c = Command::new(qemu);
     c.args(["-machine", &format!("{},accel={}", p.machine, p.accel)]);
-    c.args(["-m", "1024"]); // headroom for apk + npm during first boot
+    c.args(["-m", "1024"]); // headroom for apt during first boot
     c.arg("-nographic");
+    c.args(&fw.args);
     c.args(["-drive", &format!("file={},if=virtio,format=qcow2", base.display())]);
     c.args(["-drive", &format!("file={},if=virtio,format=raw", seed.display())]);
     c.args(["-netdev", "user,id=n0"]);
     c.args(["-device", "virtio-net-pci,netdev=n0"]);
-    // VERIFY: aarch64 'virt' needs UEFI firmware to boot; stage edk2 and add:
-    // if p.needs_uefi { c.args(["-bios", "<path-to-edk2-aarch64-code.fd>"]); }
     let status = c.status().context("running provisioning VM")?;
     if !status.success() {
         bail!("provisioning VM exited with {status}");

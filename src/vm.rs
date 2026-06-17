@@ -1,6 +1,6 @@
 use crate::platform::Platform;
 use anyhow::{Context, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use which::which;
 
@@ -11,7 +11,12 @@ pub struct RunConfig {
     pub memory_mb: u32,
 }
 
-pub fn build_run_command(p: &Platform, cfg: &RunConfig, fw_args: &[String]) -> Result<Command> {
+pub fn build_run_command(
+    p: &Platform,
+    cfg: &RunConfig,
+    fw_args: &[String],
+    cmd_file: &Path,
+) -> Result<Command> {
     let qemu = which(p.qemu).with_context(|| format!("{} not found in PATH", p.qemu))?;
     let mut c = Command::new(qemu);
 
@@ -38,8 +43,10 @@ pub fn build_run_command(p: &Platform, cfg: &RunConfig, fw_args: &[String]) -> R
     c.args(["-netdev", "user,id=n0"]);
     c.args(["-device", "virtio-net-pci,netdev=n0"]);
 
-    // Tell the in-guest runner (installed at setup) which agent to launch.
-    c.args(["-fw_cfg", &format!("name=opt/readonly/cmd,string={}", cfg.agent_cmd)]);
+    // Tell the in-guest runner (baked at setup) which agent to launch. Passed
+    // through a file (read via fw_cfg `file=`) for the same reason install does:
+    // keep any commas/quotes in the command off QEMU's option line.
+    c.args(["-fw_cfg", &format!("name=opt/readonly/cmd,file={}", cmd_file.display())]);
 
     // NOTE: aarch64 'virt' needs UEFI firmware to boot the disk; the edk2 path
     // gets wired here once setup stages it. (p.needs_uefi)

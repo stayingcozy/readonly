@@ -19,13 +19,12 @@ fn data_dir() -> PathBuf {
             .join("readonly")
     }
 }
-
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let p = platform::detect()?;
     match cli.cmd {
         Cmd::Setup { force } => setup::run(&p, &data_dir(), force),
-        Cmd::Install { agent } => install::run(&p, &data_dir(), &agent),
+        Cmd::Install { cmd } => install::run(&p, &data_dir(), &cmd.join(" ")),
         Cmd::Run(argv) => cmd_run(&p, RunArgs::parse_from(argv)),
     }
 }
@@ -44,10 +43,12 @@ fn cmd_run(p: &platform::Platform, args: RunArgs) -> Result<()> {
         base_image: data_dir().join("base.qcow2"),  // was base.img
         project_view: view.path().to_path_buf(),
         agent_cmd: args.agent.clone(),
-        memory_mb: 512,
+        memory_mb: 1024,
     };
     let fw = firmware::resolve(p)?;               // keep alive until vm exists
-    let mut cmd = vm::build_run_command(p, &cfg, &fw.args)?;
+    let cmd_file = tempfile::NamedTempFile::new()?; // holds the agent command
+    std::fs::write(cmd_file.path(), &cfg.agent_cmd)?;
+    let mut cmd = vm::build_run_command(p, &cfg, &fw.args, cmd_file.path())?;
 
     if args.dry_run {
         println!("agent      : {}", args.agent);

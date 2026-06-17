@@ -14,9 +14,10 @@ Setup
 readonly setup
 ```
 
-Install AI 
+Install an AI agent — paste the install command from its official docs.
+Quote it if it contains a pipe:
 ```
-readonly install claude
+readonly install 'curl -fsSL https://claude.ai/install.sh | bash'
 ```
 
 Run
