@@ -1,6 +1,7 @@
 use crate::platform::Platform;
-use anyhow::{Context, Result};
 use std::fs;
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
 use which::which;
@@ -24,12 +25,12 @@ pub fn resolve(p: &Platform) -> Result<Firmware> {
     let qemu = which(p.qemu)?;
     let dirs = candidate_dirs(&qemu);
 
-    let code = find_in(&dirs, CODE_NAMES).with_context(missing_firmware_msg)?;
-    let vars_tpl = find_in(&dirs, VARS_NAMES).with_context(missing_firmware_msg)?;
+    let code = find_in(&dirs, CODE_NAMES).ok_or_else(missing_firmware_msg)?;
+    let vars_tpl = find_in(&dirs, VARS_NAMES).ok_or_else(missing_firmware_msg)?;
 
     // Writable per-boot copy of the var store (we don't persist UEFI vars).
     let tmp = NamedTempFile::new()?;
-    fs::copy(&vars_tpl, tmp.path()).context("copying UEFI vars template")?;
+    fs::copy(&vars_tpl, tmp.path()).map_err(|e| format!("copying UEFI vars template: {e}"))?;
 
     let args = vec![
         "-drive".into(),

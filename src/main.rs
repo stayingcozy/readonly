@@ -1,7 +1,8 @@
 mod cli; mod firmware; mod install; mod mask; mod platform; mod setup; mod vm;
 
-use anyhow::Result;
 use clap::Parser;
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 use cli::{Cli, Cmd, RunArgs};
 use std::path::PathBuf;
 

@@ -1,7 +1,8 @@
 use crate::platform::Platform;
 use crate::setup::ensure_tools;
-use anyhow::{bail, Context, Result};
 use std::path::Path;
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 use std::process::Command;
 use tempfile::NamedTempFile;
 use which::which;
@@ -15,7 +16,7 @@ use which::which;
 pub fn run(p: &Platform, data: &Path, install_cmd: &str) -> Result<()> {
     let base = data.join("base.qcow2");
     if !base.exists() {
-        bail!("No base VM found. Run `readonly setup` first.");
+        return Err("No base VM found. Run `readonly setup` first.".into());
     }
 
     ensure_tools(p)?;
@@ -25,8 +26,8 @@ pub fn run(p: &Platform, data: &Path, install_cmd: &str) -> Result<()> {
     // Hand the command to the guest through a file (read by the runner via
     // fw_cfg `file=`), never `-fw_cfg ...,string=`. This keeps commas, quotes,
     // and pipes in the pasted command from colliding with QEMU's option parser.
-    let cmd_file = NamedTempFile::new().context("creating install-command file")?;
-    std::fs::write(cmd_file.path(), install_cmd).context("writing install command")?;
+    let cmd_file = NamedTempFile::new().map_err(|e| format!("creating install-command file: {e}"))?;
+    std::fs::write(cmd_file.path(), install_cmd).map_err(|e| format!("writing install command: {e}"))?;
 
     let mut c = Command::new(qemu);
     c.args(["-machine", &format!("{},accel={}", p.machine, p.accel)]);
@@ -44,9 +45,9 @@ pub fn run(p: &Platform, data: &Path, install_cmd: &str) -> Result<()> {
     println!("Installing into the base VM:\n  {install_cmd}\n");
     println!("When it finishes, log in to your agent, then type `poweroff` to save.\n");
 
-    let status = c.status().context("running install VM")?;
+    let status = c.status().map_err(|e| format!("running install VM: {e}"))?;
     if !status.success() {
-        bail!("install VM exited with {status}");
+        return Err(format!("install VM exited with {status}").into());
     }
     drop(cmd_file); // explicit: the command file must outlive the running VM
     println!("Done. The agent is now baked into the base image.");

@@ -1,6 +1,7 @@
 use crate::platform::Platform;
-use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 use std::process::Command;
 use which::which;
 
@@ -17,7 +18,7 @@ pub fn build_run_command(
     fw_args: &[String],
     cmd_file: &Path,
 ) -> Result<Command> {
-    let qemu = which(p.qemu).with_context(|| format!("{} not found in PATH", p.qemu))?;
+    let qemu = which(p.qemu).map_err(|e| format!("{} not found in PATH: {e}", p.qemu))?;
     let mut c = Command::new(qemu);
 
     c.args(["-machine", &format!("{},accel={}", p.machine, p.accel)]);

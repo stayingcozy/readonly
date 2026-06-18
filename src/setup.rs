@@ -1,6 +1,7 @@
 use crate::platform::{Arch, Platform};
-use anyhow::{bail, Context, Result};
 use std::fs;
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 use std::io::{Read, Write};
 use sha2::{Digest, Sha512};
 use std::path::{Path, PathBuf};
@@ -45,7 +46,7 @@ pub fn run(p: &Platform, data: &Path, force: bool) -> Result<()> {
 
     // 1. Fetch the pristine bootable image (cached), then copy to the working base.
     let pristine = fetch_image(p, &cache)?;
-    fs::copy(&pristine, &base).context("copying base image")?;
+    fs::copy(&pristine, &base).map_err(|e| format!("copying base image: {e}"))?;
 
     // 2. Build the cloud-init seed in-process (no external ISO/FAT tools).
     let seed = data.join("seed.img");
@@ -69,15 +70,15 @@ pub(crate) fn ensure_tools(p: &Platform) -> Result<()> {
 fn require_tool(name: &str) -> Result<PathBuf> {
     let path = match which(name) {
         Ok(p) => p,
-        Err(_) => bail!("{name} not found in PATH.\n\nInstall QEMU:\n{}", install_hint()),
+        Err(_) => return Err(format!("{name} not found in PATH.\n\nInstall QEMU:\n{}", install_hint()).into()),
     };
     // Confirm it actually runs (catches wrong-arch / broken installs).
     let out = Command::new(&path)
         .arg("--version")
         .output()
-        .with_context(|| format!("failed to execute {}", path.display()))?;
+        .map_err(|e| format!("failed to execute {}: {e}", path.display()))?;
     if !out.status.success() {
-        bail!("{} is present but did not run successfully", path.display());
+        return Err(format!("{} is present but did not run successfully", path.display()).into());
     }
     Ok(path)
 }
@@ -102,7 +103,7 @@ fn fetch_image(p: &Platform, cache: &Path) -> Result<PathBuf> {
     let src = image_source(p.arch);
     println!("Downloading base image: {}", src.url);
 
-    let resp = ureq::get(src.url).call().context("downloading base image")?;
+    let resp = ureq::get(src.url).call().map_err(|e| format!("downloading base image: {e}"))?;
     let mut reader = resp.into_reader();
 
     let tmp = dest.with_extension("part");
@@ -134,10 +135,10 @@ fn fetch_image(p: &Platform, cache: &Path) -> Result<PathBuf> {
         eprintln!(" (computed {got}; paste it into image_source to enable the check)");
     } else if !got.eq_ignore_ascii_case(src.sha512) {
         let _ = fs::remove_file(&tmp);
-        bail!(
+        return Err(format!(
             "checksum mismatch for base image\n expected {}\n got   {}",
             src.sha512, got
-        );
+        ).into());
     }
 
     fs::rename(&tmp, &dest)?;
@@ -244,9 +245,9 @@ fn provision(p: &Platform, base: &Path, seed: &Path) -> Result<()> {
     c.args(["-drive", &format!("file={},if=virtio,format=raw", seed.display())]);
     c.args(["-netdev", "user,id=n0"]);
     c.args(["-device", "virtio-net-pci,netdev=n0"]);
-    let status = c.status().context("running provisioning VM")?;
+    let status = c.status().map_err(|e| format!("running provisioning VM: {e}"))?;
     if !status.success() {
-        bail!("provisioning VM exited with {status}");
+        return Err(format!("provisioning VM exited with {status}").into());
     }
     Ok(())
 }

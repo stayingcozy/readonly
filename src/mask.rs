@@ -1,5 +1,6 @@
-use anyhow::Result;
 use globset::{Glob, GlobSet, GlobSetBuilder};
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 use std::fs;
 use std::path::Path;
 use walkdir::WalkDir;

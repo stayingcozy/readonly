@@ -1,5 +1,6 @@
-use anyhow::{bail, Result};
 use std::env::consts::{ARCH, OS};
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Arch { X86_64, Aarch64 }
@@ -18,13 +19,13 @@ pub fn detect() -> Result<Platform> {
     let arch = match ARCH {
         "x86_64" => Arch::X86_64,
         "aarch64" | "arm64" => Arch::Aarch64,
-        other => bail!("unsupported architecture: {other}"),
+        other => return Err(format!("unsupported architecture: {other}").into()),
     };
     let accel = match OS {
         "linux"   => "kvm:tcg",
         "macos"   => "hvf:tcg",
         "windows" => "whpx:tcg",
-        other     => bail!("unsupported OS: {other}"),
+        other     => return Err(format!("unsupported OS: {other}").into()),
     };
     Ok(match arch {
         Arch::X86_64 => Platform {
