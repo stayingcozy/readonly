@@ -1,0 +1,2 @@
+add_library(readonly_shared INTERFACE)
+target_include_directories(readonly_shared INTERFACE include)
