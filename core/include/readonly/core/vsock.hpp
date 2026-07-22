@@ -1,0 +1,31 @@
+#pragma once 
+#include <cstddef>
+#include <span>
+#include <string_view>
+#include "readonly/core/error.hpp"
+#include "readonly/shared/protocol.hpp"
+
+namespace readonly::core {
+using shared::WinSize;
+
+class VsockClient {
+public:
+    static Result<VsockClient> connect(unsigned cid, unsigned port);
+
+    Result<void> send_run(std::string_view command);
+    Result<void> send_winsize(WinSize);
+    Result<void> send_stdin(std::span<const std::byte>);
+
+    // One decoded inbound frame; the terminal loop drives this
+    struct Frame { shared::FrameType type; std::string data; int exit_code{0}; };
+    Result<Frame> next_frame();
+    ~VsockClient();
+
+    VsockClient(VsockClient&&) noexcept;
+    VsockClient& operator=(VsockClient&&) noexcept;
+    VsockClient(const VsockClient&) = delete;
+    VsockClient& operator=(const VsockClient&) = delete;
+private:
+    int fd_{-1};
+};
+} // namespace readonly::core
