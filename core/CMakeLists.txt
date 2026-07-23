@@ -1,7 +1,12 @@
-add_library(readonly_core STATIC 
-# add below as created. ex:
-# src/config.cpp
-# <read of src/*.cpp>
+add_library(readonly_core STATIC
+  src/config.cpp
+  src/registry.cpp
+  # src/snapshot.cpp
+  # src/mounts.cpp
+  # src/vm.cpp
+  # src/vsock.cpp
+  # src/state.cpp
+  # src/agent.cpp
 )
 target_include_directories(readonly_core PUBLIC include)
 target_link_libraries(readonly_core

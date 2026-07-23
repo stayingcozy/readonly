@@ -19,7 +19,7 @@ public:
 private:
     fs::path root_;
     fs::path scratch_;
-}
+};
 
 // ~/.readonly/config, key=value. Optional accel override, default mask.
 struct GlobalConfig {
