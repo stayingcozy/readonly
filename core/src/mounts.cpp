@@ -147,7 +147,9 @@ Result<MirrorStats> RunScratch::mirror_source(const fs::path& target, const Mask
             if (pec) return fail(std::format("cannot create {}: {}",
                                             dst.parent_path().string(), pec.message()));
                 
-            // 
+            // Hardlink shares the inode with the source. This is safe ONLY because
+            // the VM mounts src readonly=on — that mount, not the link, is what
+            // stops writes reaching your code. Do not make this mount writable.
             std::error_code lec;
             fs::create_hard_link(p, dst, lec);
             if (!lec) {
