@@ -32,6 +32,13 @@ FetchContent_Declare(cli11
 )
 FetchContent_MakeAvailable(cli11)
 
+FetchContent_Declare(doctest
+  GIT_REPOSITORY https://github.com/doctest/doctest.git
+  GIT_TAG        v2.5.3)
+FetchContent_MakeAvailable(doctest)
+enable_testing()
+
+add_subdirectory(tests)
 add_subdirectory(shared)
 add_subdirectory(core)
 add_subdirectory(cli)

@@ -11,6 +11,7 @@ namespace fs = std::filesystem;
 class Paths {
 public:
     static Result<Paths> discover();  // named constructor to return Result
+    static Result<Paths> at(fs::path root, fs::path scratch); // tests for temp dir
     fs::path root() const;            // ~/.readonly
     fs::path base_image() const;      // ~/.readonly/base.qcow2
     fs::path agents_dir() const;      // ~/.readonly/agents 
@@ -25,6 +26,9 @@ private:
 struct GlobalConfig {
     std::vector<std::string> default_mask{".env"};
     std::string accel_override;   // empty = autodetect
+    
+    friend bool operator==(const GlobalConfig&, const GlobalConfig&) = default;
+    
     static Result<GlobalConfig> load(const Paths&);
     Result<void> save(const Paths&) const;
 };

@@ -28,7 +28,7 @@ Read only access in current directory. By default mask .env.
 
 ## developer
 ```
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DREADONLY_SANITIZE=ON -DCMAKE_CXX_COMPILER=g++-13
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DREADONLY_SANITIZE=ON -DCMAKE_CXX_COMPILER=g++-15
 cmake --build build
 ```
 
