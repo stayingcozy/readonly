@@ -1,0 +1,32 @@
+{
+    "version": 6,
+    "configurePresets": [
+        {
+            "name": "debug-asan-clang",
+            "displayName": "Debug (ASan+UBSan, Clang)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/debug-asan-clang",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "READONLY_SANITIZE": "ON",
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++"
+            }
+        },
+        {
+            "name": "debug-clang",
+            "displayName": "Debug (plain, Clang)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/debug-clang",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++"
+            }
+        }
+    ],
+    "buildPresets": [
+        { "name": "debug-asan-clang", "configurePreset": "debug-asan-clang" },
+        { "name": "debug-clang", "configurePreset": "debug-clang" }
+    ]
+}
