@@ -37,5 +37,8 @@ Run
 ./build/cli/readonly --help
 ```
 
+## TODO
+_GLIBCXX_ASSERTIONS hardening define from the scaffold silently does nothing — the libc++ equivalent is _LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_FAST
+
 ## Future
 Add codex, copilot, etc

@@ -5,6 +5,7 @@ add_library(readonly_core STATIC
   src/mounts.cpp
   src/proc.cpp
   src/snapshot.cpp
+  src/vm.cpp
 )
 target_include_directories(readonly_core PUBLIC include PRIVATE src)
 target_link_libraries(readonly_core
