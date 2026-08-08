@@ -4,7 +4,7 @@
 #include "readonly/core/vsock.hpp"
 #include "readonly/shared/protocol.hpp"
 
-namespace readonly::cli {
+namespace readonly::core {
 using core::Result;
 using core::VsockClient;
 using shared::WinSize;

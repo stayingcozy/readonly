@@ -7,6 +7,8 @@ add_library(readonly_core STATIC
   src/snapshot.cpp
   src/vm.cpp
   src/vsock.cpp
+  src/terminal.cpp
+  src/agent.cpp
 )
 target_include_directories(readonly_core PUBLIC include PRIVATE src)
 target_link_libraries(readonly_core

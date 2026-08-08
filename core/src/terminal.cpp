@@ -1,4 +1,4 @@
-#include "readonly/cli/terminal.hpp"
+#include "readonly/core/terminal.hpp"
 
 #include <atomic>
 #include <array>
@@ -12,7 +12,7 @@
 #include <termios.h>
 #include <unistd.h>
 
-namespace readonly::cli {
+namespace readonly::core {
 using shared::FrameType;
 
 // -- global restore state --
@@ -127,6 +127,7 @@ void TerminalSession::clear_bar() {
     std::string s;
     s += kSaveCur; 
     s += std::format("\033[{};1H\033[2K", p.rows); // clear bot row
+    s += kRestCur; 
     ::write(STDOUT_FILENO, s.data(), s.size());
 }
 
@@ -188,4 +189,4 @@ Result<int> TerminalSession::pump(VsockClient& vs) {
     }
 }
 
-} // readonly::cli
+} // readonly::core

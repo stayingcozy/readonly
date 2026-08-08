@@ -1,6 +1,5 @@
 add_executable(readonly 
     src/main.cpp
-    src/terminal.cpp
 )  # + src/terminal.cpp later
 target_include_directories(readonly PRIVATE include)
 target_link_libraries(readonly
