@@ -1,6 +1,6 @@
 # readonly 
 
-Guarantee read-only, scope what's visible, hide secrets, don't let it wander or clobber.
+Guarantee read-only, scope what's visible, hide secrets, don't let it wander.
 
 *UNDER CONSTRUCTION*
 

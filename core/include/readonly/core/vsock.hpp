@@ -1,6 +1,7 @@
 #pragma once 
 #include <cstddef>
 #include <span>
+#include <string>
 #include <string_view>
 #include "readonly/core/error.hpp"
 #include "readonly/shared/protocol.hpp"
@@ -19,6 +20,8 @@ public:
     // One decoded inbound frame; the terminal loop drives this
     struct Frame { shared::FrameType type; std::string data; int exit_code{0}; };
     Result<Frame> next_frame();
+
+    int fd() const { return fd_; }          // poll() in terminal loop
     ~VsockClient();
 
     VsockClient(VsockClient&&) noexcept;
@@ -26,6 +29,7 @@ public:
     VsockClient(const VsockClient&) = delete;
     VsockClient& operator=(const VsockClient&) = delete;
 private:
+    VsockClient() = default;
     int fd_{-1};
 };
 } // namespace readonly::core
