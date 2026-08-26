@@ -1,5 +1,3 @@
-// readonly CLI entry point.
-
 #include <CLI/CLI.hpp>
 
 #include <cstdio>
@@ -381,7 +379,7 @@ int main(int argc, char **argv) {
   if (argc >= 2 && argv[1][0] != '-' && !Registry::is_reserved(argv[1]))
     return run_agent_form(argc, argv);
 
-  CLI::App app{"readonly | run AI coding agents in an ephemeral read-only VM"};
+  CLI::App app{"readonly | run AI coding agents in a read-only VM"};
   app.require_subcommand(0, 1);
 
   // setup — download base image + kernel from S3 into ~/.readonly (not yet
