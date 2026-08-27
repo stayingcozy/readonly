@@ -46,7 +46,7 @@ Result<Paths> Paths::discover() {
   auto home = home_dir();
   if (!home)
     return std::unexpected(home.error());
-  return Paths::at(*home / ".readonly", *home / ".readonly-vm");
+  return Paths::at(*home / ".readonly", *home / ".readonly" / "vm");
 }
 
 fs::path Paths::root() const { return root_; }

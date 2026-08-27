@@ -376,7 +376,8 @@ void add_debug_commands(CLI::App &app) {
 
 int main(int argc, char **argv) {
   // Agent-run form: first token is present, not a flag, not a reserved verb.
-  if (argc >= 2 && argv[1][0] != '-' && !Registry::is_reserved(argv[1]))
+  if (argc >= 2 && argv[1][0] != '-' && argv[1][0] != '_' &&
+      !Registry::is_reserved(argv[1]))
     return run_agent_form(argc, argv);
 
   CLI::App app{"readonly | run AI coding agents in a read-only VM"};

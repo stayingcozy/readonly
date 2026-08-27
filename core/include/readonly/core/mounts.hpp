@@ -27,7 +27,7 @@ struct MirrorStats {
   std::size_t dirs{0};
 };
 
-// Owns ~/.readonly-vm/<run-id>/{src, out}; rm -rf on destruction
+// Owns ~/.readonly/vm/<run-id>/{src, out}; rm -rf on destruction
 class RunScratch {
 public:
   static Result<RunScratch> create(const Paths &);
