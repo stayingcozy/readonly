@@ -8,16 +8,17 @@ namespace readonly::core {
 
 Result<void> Snapshot::qemu_img_available() {
   auto r = proc::run({"qemu-img", "--version"});
-  if (!r)
-    return std::unexpected(r.error());
-  if (r->exit_code != 0)
-    return fail(
-        "qemu-img not found on PATH - install QEMU tools (e.g. qemu-utils)");
+  if (!r || r->exit_code != 0)
+    return fail("qemu-img not found on PATH - install QEMU tools (Fedora: sudo "
+                "dnf install qemu-img)");
   return {};
 }
 
 Result<void> Snapshot::create_overlay(const fs::path &backing,
                                       const fs::path &overlay) {
+  if (auto q = qemu_img_available(); !q)
+    return std::unexpected(q.error());
+
   std::error_code ec;
 
   // backing must exist and resolve to abs. path

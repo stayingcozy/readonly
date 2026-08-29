@@ -13,11 +13,14 @@ public:
   static Result<Paths> discover(); // named constructor to return Result
   static Result<Paths> at(fs::path root,
                           fs::path scratch); // tests for temp dir
-  fs::path root() const;                     // ~/.readonly
-  fs::path base_image() const;               // ~/.readonly/base.qcow2
-  fs::path agents_dir() const;               // ~/.readonly/agents
-  fs::path scratch_root() const;             // ~/.readonly/vm
-  fs::path state_file() const;               // ~/.readonly/aivm.state
+  static Result<fs::path>
+  expand_user(std::string_view p); // "~/x" -> "/home/user/x"
+                                   //
+  fs::path root() const;           // ~/.readonly
+  fs::path base_image() const;     // ~/.readonly/base.qcow2
+  fs::path agents_dir() const;     // ~/.readonly/agents
+  fs::path scratch_root() const;   // ~/.readonly/vm
+  fs::path state_file() const;     // ~/.readonly/aivm.state
 private:
   fs::path root_;
   fs::path scratch_;

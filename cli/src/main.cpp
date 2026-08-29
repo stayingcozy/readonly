@@ -174,7 +174,12 @@ void add_debug_commands(CLI::App &app) {
     c->add_option("backing", backing)->required();
     c->add_option("overlay", overlay)->required();
     c->callback([] {
-      if (auto r = Snapshot::create_overlay(backing, overlay); !r)
+      auto back = Paths::expand_user(backing);
+      if (!back) {
+        std::println(stderr, "error: {}", back.error().message);
+        return;
+      }
+      if (auto r = Snapshot::create_overlay(*back, overlay); !r)
         std::println(stderr, "error: {}", r.error().message);
       else
         std::println("created {}", overlay);

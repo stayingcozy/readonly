@@ -49,6 +49,16 @@ Result<Paths> Paths::discover() {
   return Paths::at(*home / ".readonly", *home / ".readonly" / "vm");
 }
 
+Result<fs::path> Paths::expand_user(std::string_view p) {
+  if (p == "~" || p.starts_with("~/")) {
+    auto h = home_dir();
+    if (!h)
+      return std::unexpected(h.error());
+    return p == "~" ? *h : *h / fs::path{p.substr(2)};
+  }
+  return fs::path{p};
+}
+
 fs::path Paths::root() const { return root_; }
 fs::path Paths::scratch_root() const { return scratch_; }
 fs::path Paths::base_image() const { return root_ / "base.qcow2"; }
