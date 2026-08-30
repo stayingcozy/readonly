@@ -192,7 +192,12 @@ void add_debug_commands(CLI::App &app) {
     auto *c = app.add_subcommand("__info", "debug: qemu-img info")->group("");
     c->add_option("overlay", overlay)->required();
     c->callback([] {
-      if (auto r = Snapshot::overlay_info(overlay); !r)
+      auto olay = Paths::expand_user(overlay);
+      if (!olay) {
+        std::println(stderr, "error: {}", olay.error().message);
+        return;
+      }
+      if (auto r = Snapshot::overlay_info(*olay); !r)
         std::println(stderr, "error: {}", r.error().message);
     });
   }
@@ -206,12 +211,23 @@ void add_debug_commands(CLI::App &app) {
     c->add_option("--src", src)->required();
     c->add_option("--out", out)->required();
     c->callback([] {
+      // expand paths
+      auto im = Paths::expand_user(image);
+      auto kn = Paths::expand_user(kernel);
+      auto sr = Paths::expand_user(src);
+      auto ou = Paths::expand_user(out);
+      if (!im || !kn || !sr || !ou) {
+        std::println(stderr, "error with image, kernel, src, out input");
+        return;
+      }
       QemuConfig cfg;
-      cfg.image = fs::absolute(image);
-      cfg.kernel = fs::absolute(kernel);
-      cfg.src_share = fs::absolute(src);
-      cfg.out_share = fs::absolute(out);
+      cfg.image = *im;
+      cfg.kernel = *kn;
+      cfg.src_share = *sr;
+      cfg.out_share = *ou;
       cfg.accel = detect_accel().accel;
+
+      std::println(stdout, "Image Path: {}", cfg.image.string());
 
       std::string cmd;
       for (const auto &a : Vm::build_argv(cfg)) {
