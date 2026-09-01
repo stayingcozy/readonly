@@ -1,4 +1,6 @@
 #include "readonly/core/vm.hpp"
+#include "readonly/core/vsock.hpp"
+#include "readonly/shared/protocol.hpp"
 
 #include <cerrno>
 #include <cstring>
@@ -14,6 +16,8 @@
 extern char **environ;
 
 namespace readonly::core {
+
+using shared::kVsockPort;
 
 // -- accel detection ---------
 
@@ -195,6 +199,31 @@ void Vm::kill() {
   while (::waitpid(pid_, &status, 0) < 0 && errno == EINTR) {
   }
   pid_ = -1;
+}
+
+void Vm::soft_kill(unsigned guest_cid) {
+  if (pid_ == -1)
+    return;
+  if (auto vs = VsockClient::connect(guest_cid, kVsockPort); vs) {
+    (void)vs->send_run("sync; poweroff"); // guest tears down its own socket
+  }
+}
+
+Result<int> Vm::shutdown(unsigned guest_cid) {
+  soft_kill(guest_cid);
+
+  constexpr int kTimeoutMs = 5000;
+  constexpr int kStepMs = 100;
+  for (int waited = 0; waited < kTimeoutMs; waited += kStepMs) {
+    if (pid_ == -1 || (::kill(pid_, 0) != 0 && errno == ESRCH)) {
+      return wait();
+    }
+    ::timespec ts{0, kStepMs * 1'000'000L};
+    ::nanosleep(&ts, nullptr);
+  }
+  kill();
+  return fail(std::format("guest did not shut down within {}ms. Force kill.",
+                          kTimeoutMs));
 }
 
 Vm::~Vm() { kill(); } // never orphan a QEMU holding 9p mounts

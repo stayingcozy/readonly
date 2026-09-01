@@ -294,7 +294,9 @@ void add_debug_commands(CLI::App &app) {
       }
       if (auto r = vs->send_run(cmd); !r) {
         std::println(stderr, "{}", r.error().message);
-        vm->kill();
+        if (auto vr = vm->shutdown(cfg.guest_cid); !vr) {
+          std::println(stderr, "warning: {}", vr.error().message);
+        }
         return;
       }
       pollfd fds[2];
@@ -328,7 +330,8 @@ void add_debug_commands(CLI::App &app) {
           }
         }
       }
-      vm->kill();
+      if (auto vr = vm->shutdown(cfg.guest_cid); !vr)
+        std::println(stderr, "warning: {}", vr.error().message);
       std::println(stderr, "\n[guest command exited: {}]", exit_code);
     });
   }
@@ -367,14 +370,16 @@ void add_debug_commands(CLI::App &app) {
       }
       if (auto r = vs->send_run(cmd); !r) {
         std::println(stderr, "{}", r.error().message);
-        vm->kill();
+        if (auto vr = vm->shutdown(cfg.guest_cid); !vr)
+          std::println(stderr, "warning: {}", vr.error().message);
         return;
       }
 
       auto term = readonly::core::TerminalSession::enter();
       if (!term) {
         std::println(stderr, "term error: {}", term.error().message);
-        vm->kill();
+        if (auto vr = vm->shutdown(cfg.guest_cid); !vr)
+          std::println(stderr, "warning: {}", vr.error().message);
         return;
       }
 
@@ -385,7 +390,8 @@ void add_debug_commands(CLI::App &app) {
         code = session.pump(*vs);
       }
 
-      vm->kill();
+      if (auto vr = vm->shutdown(cfg.guest_cid); !vr)
+        std::println(stderr, "warning: {}", vr.error().message);
       if (!code)
         std::println(stderr, "session error: {}", code.error().message);
       else

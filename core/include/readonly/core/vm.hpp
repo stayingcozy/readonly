@@ -34,8 +34,10 @@ public:
   build_argv(const QemuConfig &); // Public so command can be seen
 
   static Result<Vm> launch(const QemuConfig &);
-  Result<int> wait(); // block until qemu exits
-  void kill();        // hard-kill
+  Result<int> wait();                 // block until qemu exits
+  void kill();                        // hard-kill
+  void soft_kill(unsigned guest_cid); // soft-kill, allow qemu to properly close
+  Result<int> shutdown(unsigned guest_cid); // soft and hard kill if needed
 
   int pid() const { return pid_; }
   bool running() const { return pid_ != -1; }

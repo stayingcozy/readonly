@@ -202,20 +202,9 @@ Result<void> AgentManager::install(std::string_view install_cmd,
 
   // Session 3: clean flush + poweroff, WAIT for qemu to exit before keeping
   // overlay
-  {
-    auto vs3 = VsockClient::connect(3, shared::kVsockPort);
-    if (!vs3) {
-      vm->kill();
-      return std::unexpected(vs3.error());
-    }
-    (void)vs3->send_run(
-        "sync; poweroff"); // fire and forget; guest tears down socket
-  }
-  auto exit_code = vm->wait(); // blocks until guest has flushed and powered off
-  if (!exit_code) {
-    vm->kill();
+  auto exit_code = vm->shutdown(3);
+  if (!exit_code)
     return std::unexpected(exit_code.error());
-  }
 
   // Clean shutdown verified, commit atomically
   const fs::path final_path = registry_.overlay_path(name);
