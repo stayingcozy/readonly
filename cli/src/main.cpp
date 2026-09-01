@@ -252,21 +252,30 @@ void add_debug_commands(CLI::App &app) {
 
   // __exec — boot + connect + run a command (cooked pump, no raw mode)
   {
-    static std::string image, kernel, src, out;
-    static std::vector<std::string> cmd;
+    static std::string image, kernel, src, out, cmd;
     auto *c = app.add_subcommand("__exec", "debug: run a command in the guest")
                   ->group("");
     c->add_option("--image", image)->required();
     c->add_option("--kernel", kernel)->required();
     c->add_option("--src", src)->required();
     c->add_option("--out", out)->required();
-    c->add_option("cmd", cmd, "command after --")->required();
+    c->add_option("--cmd", cmd, "command to run in guest")->required();
     c->callback([] {
+      // expand paths
+      auto im = Paths::expand_user(image);
+      auto kn = Paths::expand_user(kernel);
+      auto sr = Paths::expand_user(src);
+      auto ou = Paths::expand_user(out);
+      if (!im || !kn || !sr || !ou) {
+        std::println(stderr, "error with image, kernel, src, out input");
+        return;
+      }
+
       QemuConfig cfg;
-      cfg.image = fs::absolute(image);
-      cfg.kernel = fs::absolute(kernel);
-      cfg.src_share = fs::absolute(src);
-      cfg.out_share = fs::absolute(out);
+      cfg.image = *im;
+      cfg.kernel = *kn;
+      cfg.src_share = *sr;
+      cfg.out_share = *ou;
       cfg.accel = detect_accel().accel;
       cfg.serial_log = fs::absolute("readonly-serial.log");
 
@@ -283,19 +292,11 @@ void add_debug_commands(CLI::App &app) {
         vm->kill();
         return;
       }
-
-      std::string joined;
-      for (std::size_t i = 0; i < cmd.size(); ++i) {
-        if (i)
-          joined += ' ';
-        joined += cmd[i];
-      }
-      if (auto r = vs->send_run(joined); !r) {
+      if (auto r = vs->send_run(cmd); !r) {
         std::println(stderr, "{}", r.error().message);
         vm->kill();
         return;
       }
-
       pollfd fds[2];
       fds[0] = {STDIN_FILENO, POLLIN, 0};
       fds[1] = {vs->fd(), POLLIN, 0};
