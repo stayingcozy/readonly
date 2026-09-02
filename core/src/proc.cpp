@@ -23,6 +23,7 @@ Result<Output> run(const std::vector<std::string> &argv) {
   posix_spawn_file_actions_t fa;
   posix_spawn_file_actions_init(&fa);
   posix_spawn_file_actions_adddup2(&fa, err_pipe[1], STDERR_FILENO);
+  posix_spawn_file_actions_adddup2(&fa, err_pipe[1], STDOUT_FILENO);
   posix_spawn_file_actions_addclose(&fa, err_pipe[0]);
   posix_spawn_file_actions_addclose(&fa, err_pipe[1]);
 

@@ -197,8 +197,11 @@ void add_debug_commands(CLI::App &app) {
         std::println(stderr, "error: {}", olay.error().message);
         return;
       }
-      if (auto r = Snapshot::overlay_info(*olay); !r)
+      auto r = Snapshot::overlay_info(*olay);
+      if (!r)
         std::println(stderr, "error: {}", r.error().message);
+      else
+        std::print("{}", *r);
     });
   }
 
