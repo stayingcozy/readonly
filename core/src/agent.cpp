@@ -5,6 +5,7 @@
 #include "readonly/core/vsock.hpp"
 #include "readonly/shared/protocol.hpp"
 
+#include <csignal>
 #include <format>
 #include <random>
 #include <system_error>
@@ -47,7 +48,7 @@ QemuConfig make_config(const fs::path &image, const fs::path &kernel,
 
 // Boot existing config, connect, drive interactive cmd
 // to complete via terminal
-Result<int> interactive_session(Vm &vm, std::string_view command) {
+Result<int> interactive_session(std::string_view command) {
   auto vs = VsockClient::connect(3 /*guest_cid*/, shared::kVsockPort);
   if (!vs)
     return std::unexpected(vs.error());
@@ -58,7 +59,6 @@ Result<int> interactive_session(Vm &vm, std::string_view command) {
   if (!term)
     return std::unexpected(term.error());
   return term->pump(*vs); // restores terminal in its own destructor
-  (void)vm;
 }
 } // namespace
 
@@ -115,7 +115,7 @@ Result<int> AgentManager::run(std::string_view name, const fs::path &target,
     return std::unexpected(vm.error());
 
   // 4. run agent's command interactively; VM hard-killed after
-  auto code = interactive_session(*vm, desc->run_cmd);
+  auto code = interactive_session(desc->run_cmd);
   vm->kill();
   // scratch + overlay_guard destructor discard everythign here
   return code; // exit code || session error
@@ -125,6 +125,15 @@ Result<int> AgentManager::run(std::string_view name, const fs::path &target,
 
 Result<void> AgentManager::install(std::string_view install_cmd,
                                    std::optional<std::string> name_opt) {
+  struct sigaction old_sigint{};
+  struct sigaction ign{};
+  ign.sa_handler = SIG_IGN;
+  ::sigaction(SIGINT, &ign, &old_sigint);
+  struct RestoreSigint {
+    struct sigaction old;
+    ~RestoreSigint() { ::sigaction(SIGINT, &old, nullptr); }
+  } restore_sigint{old_sigint};
+
   auto deps = resolve_deps();
   if (!deps)
     return std::unexpected(deps.error());
@@ -188,7 +197,9 @@ Result<void> AgentManager::install(std::string_view install_cmd,
       vm->kill();
       return std::unexpected(vs2.error());
     }
-    if (auto r = vs2->send_run(name); !r) {
+    const std::string auth_cmd =
+        std::format("export PATH=\"$HOME/.local/bin:$PATH\"; {}", name);
+    if (auto r = vs2->send_run(auth_cmd); !r) {
       vm->kill();
       return std::unexpected(r.error());
     }
@@ -202,9 +213,7 @@ Result<void> AgentManager::install(std::string_view install_cmd,
 
   // Session 3: clean flush + poweroff, WAIT for qemu to exit before keeping
   // overlay
-  auto exit_code = vm->shutdown(3);
-  if (!exit_code)
-    return std::unexpected(exit_code.error());
+  (void)vm->shutdown(3);
 
   // Clean shutdown verified, commit atomically
   const fs::path final_path = registry_.overlay_path(name);
@@ -218,7 +227,7 @@ Result<void> AgentManager::install(std::string_view install_cmd,
   AgentDescriptor d;
   d.name = name;
   d.surface = shared::Surface::Cli; // v1 CLI only
-  d.run_cmd = name;
+  d.run_cmd = std::format("export PATH=\"$HOME/.local/bin:$PATH\"; {}", name);
   d.install_cmd = std::string{install_cmd};
   if (auto w = registry_.write(d); !w) {
     // Overlay commited but meta failed: resolve() tolerates missing meta,

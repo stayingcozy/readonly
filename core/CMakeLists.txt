@@ -9,6 +9,7 @@ add_library(readonly_core STATIC
   src/vsock.cpp
   src/terminal.cpp
   src/agent.cpp
+  src/guest.cpp
 )
 target_include_directories(readonly_core PUBLIC include PRIVATE src)
 target_link_libraries(readonly_core

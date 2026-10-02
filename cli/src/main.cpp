@@ -11,6 +11,7 @@
 
 #include "readonly/core/agent.hpp"
 #include "readonly/core/config.hpp"
+#include "readonly/core/guest.hpp"
 #include "readonly/core/mounts.hpp"
 #include "readonly/core/registry.hpp"
 #include "readonly/core/snapshot.hpp"
@@ -282,60 +283,18 @@ void add_debug_commands(CLI::App &app) {
       cfg.accel = detect_accel().accel;
       cfg.serial_log = fs::absolute("readonly-serial.log");
 
-      auto vm = Vm::launch(cfg);
-      if (!vm) {
-        std::println(stderr, "boot error: {}", vm.error().message);
-        return;
-      }
       std::println(stderr, "[booting; serial -> readonly-serial.log]");
-
-      auto vs = VsockClient::connect(cfg.guest_cid, shared::kVsockPort);
-      if (!vs) {
-        std::println(stderr, "connect error: {}", vs.error().message);
-        vm->kill();
+      auto ec = readonly::core::exec_in_guest(
+          cfg, cmd, /*stdin_data=*/{},
+          [](std::string_view chunk) {
+            ::write(STDOUT_FILENO, chunk.data(), chunk.size());
+          },
+          STDIN_FILENO);
+      if (!ec) {
+        std::println(stderr, "\n[error: {}]", ec.error().message);
         return;
       }
-      if (auto r = vs->send_run(cmd); !r) {
-        std::println(stderr, "{}", r.error().message);
-        if (auto vr = vm->shutdown(cfg.guest_cid); !vr) {
-          std::println(stderr, "warning: {}", vr.error().message);
-        }
-        return;
-      }
-      pollfd fds[2];
-      fds[0] = {STDIN_FILENO, POLLIN, 0};
-      fds[1] = {vs->fd(), POLLIN, 0};
-      int exit_code = -1;
-      bool done = false;
-      while (!done) {
-        if (::poll(fds, 2, -1) < 0) {
-          if (errno == EINTR)
-            continue;
-          break;
-        }
-        if (fds[0].revents & POLLIN) {
-          std::array<std::byte, 4096> b;
-          ssize_t n = ::read(STDIN_FILENO, b.data(), b.size());
-          if (n > 0)
-            (void)vs->send_stdin({b.data(), static_cast<std::size_t>(n)});
-        }
-        if (fds[1].revents & (POLLIN | POLLHUP)) {
-          auto f = vs->next_frame();
-          if (!f) {
-            std::println(stderr, "\n[stream ended: {}]", f.error().message);
-            break;
-          }
-          if (f->type == shared::FrameType::Data)
-            ::write(STDOUT_FILENO, f->data.data(), f->data.size());
-          else if (f->type == shared::FrameType::Exit) {
-            exit_code = f->exit_code;
-            done = true;
-          }
-        }
-      }
-      if (auto vr = vm->shutdown(cfg.guest_cid); !vr)
-        std::println(stderr, "warning: {}", vr.error().message);
-      std::println(stderr, "\n[guest command exited: {}]", exit_code);
+      std::println(stderr, "\n[guest command exited: {}]", *ec);
     });
   }
 
