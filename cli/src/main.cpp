@@ -412,6 +412,27 @@ int main(int argc, char **argv) {
     });
   }
 
+  // reauth — redo an agent's login and save it into its snapshot
+  std::string reauth_name;
+  {
+    auto *c = app.add_subcommand(
+        "reauth", "log an installed agent in again and save the login");
+    c->add_option("name", reauth_name, "installed agent name")->required();
+    c->callback([&] {
+      auto paths = Paths::discover();
+      if (!paths) {
+        std::println(stderr, "error: {}", paths.error().message);
+        return;
+      }
+      Registry reg{*paths};
+      AgentManager mgr{*paths, reg};
+      if (auto r = mgr.reauth(reauth_name); !r)
+        std::println(stderr, "reauth failed: {}", r.error().message);
+      else
+        std::println("login saved.");
+    });
+  }
+
   // list — installed agents
   app.add_subcommand("list", "list installed agents")->callback([] {
     auto paths = Paths::discover();

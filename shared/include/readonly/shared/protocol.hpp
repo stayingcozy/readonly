@@ -7,6 +7,7 @@
 #define RO_FRAME_WINSZ 2u /* host->guest: payload = rows:u16le, cols:u16le */
 #define RO_FRAME_DATA 3u  /* bidirectional: raw bytes (stdin / PTY output)   */
 #define RO_FRAME_EXIT 4u  /* guest->host: payload = int32le exit code        */
+#define RO_GUEST_SRC_DIR "/src" /* 9p `src` mount point (readonly-setup)     */
 
 #ifdef __cplusplus
 #include <cstdint>
@@ -14,6 +15,7 @@ namespace readonly::shared {
 
 inline constexpr std::uint8_t kProtocolVersion = RO_PROTOCOL_VERSION;
 inline constexpr std::uint32_t kVsockPort = RO_VSOCK_PORT;
+inline constexpr const char *kGuestSrcDir = RO_GUEST_SRC_DIR;
 
 // Wire frame: [type:u8][len:u32 little-endian][payload:len bytes]
 enum class FrameType : std::uint8_t {

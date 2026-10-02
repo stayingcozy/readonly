@@ -21,6 +21,11 @@ public:
   Result<void> install(std::string_view install_cmd,
                        std::optional<std::string> name = std::nullopt);
 
+  // copy agent snapshot -> boot copy -> auth until verified (or user
+  // saves/aborts) -> clean poweroff -> atomic rename over agents/<name>.qcow2
+  // any failure leaves the old snapshot untouched
+  Result<void> reauth(std::string_view name);
+
   // Resolve -> mirror source -> throwaway overlay on agent snapshot
   //  -> boot -> run agent's run_cmd through terminal -> discard all
   //  Return guest command's exit code

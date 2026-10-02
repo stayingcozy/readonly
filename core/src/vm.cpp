@@ -7,6 +7,7 @@
 #include <ctime>
 #include <fcntl.h>
 #include <format>
+#include <poll.h>
 #include <spawn.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -18,6 +19,16 @@ extern char **environ;
 namespace readonly::core {
 
 using shared::kVsockPort;
+
+namespace {
+int exit_code_of(int status) {
+  if (WIFEXITED(status))
+    return WEXITSTATUS(status);
+  if (WIFSIGNALED(status))
+    return 128 + WTERMSIG(status);
+  return -1;
+}
+} // namespace
 
 // -- accel detection ---------
 
@@ -184,11 +195,7 @@ Result<int> Vm::wait() {
     return fail(std::format("waitpid failed: {}", why));
   }
   pid_ = -1;
-  if (WIFEXITED(status))
-    return WEXITSTATUS(status);
-  if (WIFSIGNALED(status))
-    return 128 + WTERMSIG(status);
-  return -1;
+  return exit_code_of(status);
 }
 
 void Vm::kill() {
@@ -204,19 +211,34 @@ void Vm::kill() {
 void Vm::soft_kill(unsigned guest_cid) {
   if (pid_ == -1)
     return;
-  if (auto vs = VsockClient::connect(guest_cid, kVsockPort); vs) {
-    (void)vs->send_run("sync; poweroff"); // guest tears down its own socket
+  auto vs = VsockClient::connect(guest_cid, kVsockPort);
+  if (!vs || !vs->send_run("sync; poweroff"))
+    return;
+  // Hold the connection until poweroff returns: supervisor SIGKILLs the
+  // child the moment the host disconnects, before poweroff can run
+  constexpr int kAckMs = 3000;
+  pollfd pfd{vs->fd(), POLLIN, 0};
+  while (::poll(&pfd, 1, kAckMs) > 0) {
+    auto f = vs->next_frame();
+    if (!f || f->type == shared::FrameType::Exit)
+      break; // poweroff returned, or guest closed the socket going down
   }
 }
 
 Result<int> Vm::shutdown(unsigned guest_cid) {
   soft_kill(guest_cid);
 
-  constexpr int kTimeoutMs = 5000;
+  constexpr int kTimeoutMs = 15000; // clean poweroff measured ~5.2s
   constexpr int kStepMs = 100;
   for (int waited = 0; waited < kTimeoutMs; waited += kStepMs) {
-    if (pid_ == -1 || (::kill(pid_, 0) != 0 && errno == ESRCH)) {
+    if (pid_ == -1)
       return wait();
+    // waitpid, not kill(pid,0): exited qemu is a zombie until reaped,
+    // and kill(pid,0) still succeeds on a zombie
+    int status = 0;
+    if (::waitpid(pid_, &status, WNOHANG) == pid_) {
+      pid_ = -1;
+      return exit_code_of(status);
     }
     ::timespec ts{0, kStepMs * 1'000'000L};
     ::nanosleep(&ts, nullptr);

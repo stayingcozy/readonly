@@ -7,7 +7,11 @@
 
 #include <csignal>
 #include <format>
+#include <iostream>
+#include <optional>
+#include <print>
 #include <random>
+#include <string>
 #include <system_error>
 
 namespace readonly::core {
@@ -59,6 +63,113 @@ Result<int> interactive_session(std::string_view command) {
   if (!term)
     return std::unexpected(term.error());
   return term->pump(*vs); // restores terminal in its own destructor
+}
+
+// RAII: ignore SIGINT for install/reauth
+class SigintIgnored {
+public:
+  SigintIgnored() {
+    struct sigaction ign{};
+    ign.sa_handler = SIG_IGN;
+    ::sigaction(SIGINT, &ign, &old_);
+  }
+  ~SigintIgnored() { ::sigaction(SIGINT, &old_, nullptr); }
+  SigintIgnored(const SigintIgnored &) = delete;
+  SigintIgnored &operator=(const SigintIgnored &) = delete;
+
+private:
+  struct sigaction old_{};
+};
+
+// Known vendor from install cmd; shared by infer_name + auth_probe
+std::optional<std::string_view> known_kind(std::string_view cmd) {
+  struct Known {
+    std::string_view needle, name;
+  };
+  constexpr Known table[] = {
+      {"anthropic", "claude"}, {"claude", "claude"},   {"codex", "codex"},
+      {"chatgpt", "codex"},    {"copilot", "copilot"}, {"gh.io", "copilot"},
+  };
+  for (const auto &k : table)
+    if (cmd.find(k.needle) != std::string_view::npos)
+      return k.name;
+  return std::nullopt;
+}
+
+// Guest shell test, exit 0 iff creds stored. Keyed on install_cmd (not name)
+// so --name overrides still probe. nullopt -> can't verify, ask user
+std::optional<std::string_view> auth_probe(std::string_view install_cmd) {
+  const auto kind = known_kind(install_cmd);
+  if (kind == "claude")
+    return R"(test -s "$HOME/.claude/.credentials.json")";
+  if (kind == "codex")
+    return R"(test -s "$HOME/.codex/auth.json")";
+  return std::nullopt; // copilot: creds location unverified
+}
+
+// Non-interactive cmd on the already-booted VM; output discarded
+Result<int> quiet_session(std::string_view command) {
+  auto vs = VsockClient::connect(3, shared::kVsockPort);
+  if (!vs)
+    return std::unexpected(vs.error());
+  if (auto r = vs->send_run(command); !r)
+    return std::unexpected(r.error());
+  for (;;) {
+    auto f = vs->next_frame();
+    if (!f)
+      return std::unexpected(f.error());
+    if (f->type == shared::FrameType::Exit)
+      return f->exit_code;
+  }
+}
+
+enum class AuthOutcome { Authed, Unverified, Abort };
+
+// Run agent interactively until probe passes or the user decides
+Result<AuthOutcome> auth_loop(std::string_view name, std::string_view run_cmd,
+                              std::optional<std::string_view> probe) {
+  for (;;) {
+    // agent exit code irrelevant: user auths then dips
+    if (auto code = interactive_session(run_cmd); !code)
+      return std::unexpected(code.error());
+
+    if (probe) {
+      auto ok = quiet_session(*probe);
+      if (!ok)
+        return std::unexpected(ok.error());
+      if (*ok == 0)
+        return AuthOutcome::Authed;
+      std::println(stderr, "\nno saved login found for '{}'.", name);
+    } else {
+      std::println(stderr, "\ncannot verify login for '{}'.", name);
+    }
+
+    std::print(stderr, "[r]etry login, [s]ave anyway, [a]bort? ");
+    std::string ans;
+    if (!std::getline(std::cin, ans) || ans.starts_with('a'))
+      return AuthOutcome::Abort;
+    if (ans.starts_with('s')) {
+      std::println(stderr, "saving; run `readonly reauth {}` to fix later.",
+                   name);
+      return AuthOutcome::Unverified;
+    }
+  }
+}
+
+// Clean poweroff, then atomic rename. Never commit after a forced kill:
+// an unflushed qcow2 can be torn
+Result<void> commit_overlay(Vm &vm, OverlayGuard &staging,
+                            const fs::path &final_path) {
+  if (auto r = vm.shutdown(3); !r)
+    return fail(std::format("guest did not power off cleanly, not saved: {}",
+                            r.error().message));
+  std::error_code ec;
+  fs::rename(staging.path(), final_path, ec); // replaces atomically
+  if (ec)
+    return fail(std::format("cannot commit overlay to {}: {}",
+                            final_path.string(), ec.message()));
+  staging.keep();
+  return {};
 }
 } // namespace
 
@@ -114,9 +225,19 @@ Result<int> AgentManager::run(std::string_view name, const fs::path &target,
   if (!vm)
     return std::unexpected(vm.error());
 
-  // 4. run agent's command interactively; VM hard-killed after
-  auto code = interactive_session(desc->run_cmd);
+  // 4. run agent's command interactively from the mounted source (supervisor
+  // shell starts in /); VM hard-killed after
+  const auto probe = auth_probe(desc->install_cmd);
+  const bool had_login = !probe || quiet_session(*probe).value_or(1) == 0;
+  const std::string cmd = std::format("cd {} || exit 1; {}",
+                                      shared::kGuestSrcDir, desc->run_cmd);
+  auto code = interactive_session(cmd);
   vm->kill();
+  if (!had_login)
+    std::println(stderr,
+                 "note: '{}' has no saved login, and logins made in a run are "
+                 "discarded. Run `readonly reauth {}` to save one.",
+                 name, name);
   // scratch + overlay_guard destructor discard everythign here
   return code; // exit code || session error
 }
@@ -125,14 +246,7 @@ Result<int> AgentManager::run(std::string_view name, const fs::path &target,
 
 Result<void> AgentManager::install(std::string_view install_cmd,
                                    std::optional<std::string> name_opt) {
-  struct sigaction old_sigint{};
-  struct sigaction ign{};
-  ign.sa_handler = SIG_IGN;
-  ::sigaction(SIGINT, &ign, &old_sigint);
-  struct RestoreSigint {
-    struct sigaction old;
-    ~RestoreSigint() { ::sigaction(SIGINT, &old, nullptr); }
-  } restore_sigint{old_sigint};
+  SigintIgnored sigint_ignored;
 
   auto deps = resolve_deps();
   if (!deps)
@@ -189,45 +303,29 @@ Result<void> AgentManager::install(std::string_view install_cmd,
     }
   }
 
-  // Session 2: run agent for user auth (device flow in host browser)
-  // reconnect: supervisor looped back to accept() after sess 1
-  {
-    auto vs2 = VsockClient::connect(3, shared::kVsockPort);
-    if (!vs2) {
-      vm->kill();
-      return std::unexpected(vs2.error());
-    }
-    const std::string auth_cmd =
-        std::format("export PATH=\"$HOME/.local/bin:$PATH\"; {}", name);
-    if (auto r = vs2->send_run(auth_cmd); !r) {
-      vm->kill();
-      return std::unexpected(r.error());
-    }
-    auto term = TerminalSession::enter();
-    if (!term) {
-      vm->kill();
-      return std::unexpected(term.error());
-    }
-    (void)term->pump(*vs2); // exit code irrelevant; user need auth then dip
+  const std::string run_cmd =
+      std::format("export PATH=\"$HOME/.local/bin:$PATH\"; {}", name);
+
+  // Session 2..n: auth until verified, or user saves/aborts
+  // (each session reconnects: supervisor loops back to accept())
+  auto outcome = auth_loop(name, run_cmd, auth_probe(install_cmd));
+  if (!outcome) {
+    vm->kill();
+    return std::unexpected(outcome.error());
+  }
+  if (*outcome == AuthOutcome::Abort) {
+    vm->kill();
+    return fail("install aborted; nothing saved");
   }
 
-  // Session 3: clean flush + poweroff, WAIT for qemu to exit before keeping
-  // overlay
-  (void)vm->shutdown(3);
-
-  // Clean shutdown verified, commit atomically
-  const fs::path final_path = registry_.overlay_path(name);
-  std::error_code ec;
-  fs::rename(staging, final_path, ec);
-  if (ec)
-    return fail(std::format("cannot commit overlay to {}: {}",
-                            final_path.string(), ec.message()));
-  guard.keep(); // staging now final_path; DONT THINK ABOUT removing it
+  // Clean flush + poweroff, then commit atomically
+  if (auto c = commit_overlay(*vm, guard, registry_.overlay_path(name)); !c)
+    return c;
 
   AgentDescriptor d;
   d.name = name;
   d.surface = shared::Surface::Cli; // v1 CLI only
-  d.run_cmd = std::format("export PATH=\"$HOME/.local/bin:$PATH\"; {}", name);
+  d.run_cmd = run_cmd;
   d.install_cmd = std::string{install_cmd};
   if (auto w = registry_.write(d); !w) {
     // Overlay commited but meta failed: resolve() tolerates missing meta,
@@ -237,21 +335,55 @@ Result<void> AgentManager::install(std::string_view install_cmd,
   return {};
 }
 
+// --- reauth ---
+
+Result<void> AgentManager::reauth(std::string_view name) {
+  SigintIgnored sigint_ignored;
+
+  auto deps = resolve_deps();
+  if (!deps)
+    return std::unexpected(deps.error());
+  auto desc = registry_.resolve(name);
+  if (!desc)
+    return std::unexpected(desc.error());
+
+  auto scratch = RunScratch::create(paths_);
+  if (!scratch)
+    return std::unexpected(scratch.error());
+
+  // Work on a copy: aborted auth or a live `readonly <name>` (backed by
+  // final_path) never sees a half-written snapshot
+  const fs::path final_path = registry_.overlay_path(name);
+  const fs::path staging = scratch->run_dir() / "reauth.qcow2";
+  std::error_code ec;
+  fs::copy_file(final_path, staging, ec);
+  if (ec)
+    return fail(std::format("cannot stage {}: {}", final_path.string(),
+                            ec.message()));
+  OverlayGuard guard(staging); // rm unless committed
+
+  auto vm = Vm::launch(
+      make_config(staging, deps->kernel, scratch->src(), scratch->out()));
+  if (!vm)
+    return std::unexpected(vm.error());
+
+  auto outcome = auth_loop(name, desc->run_cmd, auth_probe(desc->install_cmd));
+  if (!outcome) {
+    vm->kill();
+    return std::unexpected(outcome.error());
+  }
+  if (*outcome == AuthOutcome::Abort) {
+    vm->kill();
+    return fail("reauth aborted; snapshot unchanged");
+  }
+  return commit_overlay(*vm, guard, final_path);
+}
+
 // --- name inference ---
 
 std::string AgentManager::infer_name(std::string_view cmd) {
-  struct Known {
-    std::string_view needle, name;
-  };
-  constexpr Known table[] = {
-      {"anthropic", "claude"}, {"claude", "claude"},   {"codex", "codex"},
-      {"chatgpt", "codex"},    {"copilot", "copilot"}, {"gh.io", "copilot"},
-  };
-  for (const auto &k : table) {
-    if (cmd.find(k.needle) != std::string_view::npos) {
-      return std::string{k.name};
-    }
-  }
+  if (auto k = known_kind(cmd))
+    return std::string{*k};
 
   // Fallback: random readonly-safe name
   std::random_device rd;
