@@ -22,6 +22,10 @@ termios g_orig{};
 std::atomic<bool> g_raw_active{false};
 volatile std::sig_atomic_t g_winch = 0;
 
+// READONLY_NOBAR=1 -> skip in-band bar painting (A/B jank diagnostic).
+// Agent still gets rows-1, so only the injected bytes differ
+const bool g_bar_enabled = std::getenv("READONLY_NOBAR") == nullptr;
+
 constexpr std::string_view kGold =
     "\033[48;5;220m\033[38;5;16m"; // gold bg, near-black fg
 constexpr std::string_view kReset = "\033[0m";
@@ -111,12 +115,14 @@ TerminalSession &TerminalSession::operator=(TerminalSession &&o) noexcept {
 
 // --- geometry + bar ---
 
-WinSize TerminalSession::agent_winsize() const {
+WinSize TerminalSession::agent_winsize() {
   WinSize p = physical_size();
   return {static_cast<std::uint16_t>(p.rows > 1 ? p.rows - 1 : 1), p.cols};
 }
 
 void TerminalSession::draw_bar() {
+  if (!g_bar_enabled)
+    return;
   const WinSize p = physical_size();
   const int bar_row = p.rows;
 
@@ -135,6 +141,8 @@ void TerminalSession::draw_bar() {
 }
 
 void TerminalSession::clear_bar() {
+  if (!g_bar_enabled)
+    return;
   const WinSize p = physical_size();
   std::string s;
   s += kSaveCur;

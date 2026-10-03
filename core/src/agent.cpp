@@ -56,7 +56,15 @@ Result<int> interactive_session(std::string_view command) {
   auto vs = VsockClient::connect(3 /*guest_cid*/, shared::kVsockPort);
   if (!vs)
     return std::unexpected(vs.error());
-  if (auto r = vs->send_run(command); !r)
+
+  // Env + initial PTY size before the agent starts: supervisor inherits
+  // TERM=linux from init, and the PTY is 0x0 until the first WINSZ frame
+  const WinSize ws = TerminalSession::agent_winsize();
+  const std::string wrapped = std::format(
+      "export TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8; "
+      "stty rows {} cols {} 2>/dev/null; {}",
+      ws.rows, ws.cols, command);
+  if (auto r = vs->send_run(wrapped); !r)
     return std::unexpected(r.error());
 
   auto term = TerminalSession::enter();
@@ -229,8 +237,8 @@ Result<int> AgentManager::run(std::string_view name, const fs::path &target,
   // shell starts in /); VM hard-killed after
   const auto probe = auth_probe(desc->install_cmd);
   const bool had_login = !probe || quiet_session(*probe).value_or(1) == 0;
-  const std::string cmd = std::format("cd {} || exit 1; {}",
-                                      shared::kGuestSrcDir, desc->run_cmd);
+  const std::string cmd =
+      std::format("cd {} || exit 1; {}", shared::kGuestSrcDir, desc->run_cmd);
   auto code = interactive_session(cmd);
   vm->kill();
   if (!had_login)
@@ -358,8 +366,8 @@ Result<void> AgentManager::reauth(std::string_view name) {
   std::error_code ec;
   fs::copy_file(final_path, staging, ec);
   if (ec)
-    return fail(std::format("cannot stage {}: {}", final_path.string(),
-                            ec.message()));
+    return fail(
+        std::format("cannot stage {}: {}", final_path.string(), ec.message()));
   OverlayGuard guard(staging); // rm unless committed
 
   auto vm = Vm::launch(

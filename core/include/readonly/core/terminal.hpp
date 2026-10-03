@@ -19,8 +19,8 @@ public:
   static Result<TerminalSession> enter();
   ~TerminalSession();
 
-  // Guest PTY size
-  WinSize agent_winsize() const;
+  // Guest PTY size (physical rows-1, bar reserved). No session needed
+  static WinSize agent_winsize();
 
   void draw_bar();  // paint gold bar on bottom (repeat)
   void clear_bar(); // release row before handing screen back
