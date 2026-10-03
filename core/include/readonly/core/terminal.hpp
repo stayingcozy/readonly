@@ -11,15 +11,15 @@ using shared::WinSize;
 
 // Raw-mode host terminal. Restores termios on every exit path
 //   RAII + signals + atexit
-// Reserves bottom row for the gold READONLY bar and sizes
-// the guest PTY to rows-1 so the agent never paints over it
+// With READONLY_BAR=1, reserves bottom row for the gold READONLY bar and
+// sizes the guest PTY to rows-1 so the agent never paints over it
 
 class TerminalSession {
 public:
   static Result<TerminalSession> enter();
   ~TerminalSession();
 
-  // Guest PTY size (physical rows-1, bar reserved). No session needed
+  // Guest PTY size (rows-1 when bar on). No session needed
   static WinSize agent_winsize();
 
   void draw_bar();  // paint gold bar on bottom (repeat)
